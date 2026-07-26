@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Table Timer</title>
+<meta name="description" content="A chess-clock-style turn timer for tabletop games.">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#16241E">
+<link rel="icon" href="./icons/icon-192.png">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ============================= HOME ============================= -->
+  <section id="screen-home" class="screen" data-screen="home">
+    <header class="home-header">
+      <h1 class="wordmark">Table Timer</h1>
+      <button id="btn-new-profile" class="btn btn-primary" type="button">New timer</button>
+    </header>
+
+    <button id="resume-card" class="resume-card hidden" type="button">
+      <div class="resume-info">
+        <p class="resume-label">Game in progress</p>
+        <h2 id="resume-profile-name"></h2>
+        <p id="resume-detail" class="muted"></p>
+      </div>
+      <span class="btn btn-accent" aria-hidden="true">Resume</span>
+    </button>
+
+    <h2 id="heading-recent" class="list-heading hidden">Recent games</h2>
+    <ul id="profile-list-recent" class="profile-list"></ul>
+
+    <h2 id="heading-templates" class="list-heading hidden">Templates</h2>
+    <ul id="profile-list-templates" class="profile-list"></ul>
+
+    <div id="empty-state" class="empty-state hidden">
+      <button id="btn-create-first" class="btn btn-primary btn-large" type="button">Create your first timer</button>
+    </div>
+  </section>
+
+  <!-- ===================== CONFIRM START SHEET ======================= -->
+  <div id="sheet-confirm-start" class="sheet hidden">
+    <div class="sheet-backdrop" data-close="confirm-start"></div>
+    <div class="sheet-content">
+      <h2 id="confirm-profile-name"></h2>
+      <p id="confirm-meta" class="muted"></p>
+      <ul id="confirm-roster" class="roster-list"></ul>
+      <div class="sheet-actions">
+        <button id="btn-confirm-cancel" class="btn btn-ghost" type="button">Cancel</button>
+        <button id="btn-confirm-start" class="btn btn-primary" type="button">Start game</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================ SETUP ============================== -->
+  <section id="screen-setup" class="screen hidden" data-screen="setup">
+    <header class="setup-header">
+      <button id="btn-setup-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <h1 id="setup-title">New timer</h1>
+      <button id="btn-setup-save" class="btn btn-primary" type="button">Save</button>
+    </header>
+
+    <div class="setup-body">
+      <label class="field">
+        <span class="field-label">Timer name</span>
+        <input id="input-profile-name" type="text" placeholder="Sunday Catan" maxlength="40">
+      </label>
+
+      <fieldset class="field mode-picker">
+        <legend class="field-label">Mode</legend>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="total" checked>
+          <span class="mode-name">Total time</span>
+          <span class="mode-blurb">Each player gets one budget for the whole game. Their clock runs only on their turn.</span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="per_turn">
+          <span class="mode-name">Per turn</span>
+          <span class="mode-blurb">Everyone gets the same fresh allowance every turn — it resets each time.</span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="total_increment">
+          <span class="mode-name">Total + increment</span>
+          <span class="mode-blurb">Like total time, but players gain a little time back at the end of each turn.</span>
+        </label>
+      </fieldset>
+
+      <div class="field" id="increment-field-group" hidden>
+        <span class="field-label">Increment per turn</span>
+        <div class="time-input">
+          <input id="input-increment-min" type="number" min="0" max="59" value="0" inputmode="numeric"><span>m</span>
+          <input id="input-increment-sec" type="number" min="0" max="59" value="30" inputmode="numeric"><span>s</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="field-label">Default budget per player</span>
+        <div class="time-input">
+          <input id="input-default-min" type="number" min="0" max="180" value="10" inputmode="numeric"><span>m</span>
+          <input id="input-default-sec" type="number" min="0" max="59" value="0" inputmode="numeric"><span>s</span>
+        </div>
+        <button id="btn-apply-default-budget" class="btn btn-ghost btn-small" type="button">Apply to all players</button>
+      </div>
+
+      <label class="field field-row">
+        <span class="field-label">Sound alerts by default</span>
+        <input id="chk-alerts-enabled" type="checkbox" checked>
+      </label>
+
+      <div class="field">
+        <div class="field-label-row">
+          <span class="field-label">Players</span>
+          <button id="btn-randomize-order" class="btn btn-ghost btn-small" type="button">Randomize order</button>
+        </div>
+        <ul id="player-setup-list" class="player-setup-list"></ul>
+        <button id="btn-add-player" class="btn btn-ghost" type="button">+ Add player</button>
+      </div>
+
+      <div class="field setup-danger-zone" id="setup-existing-actions" hidden>
+        <button id="btn-setup-save-as-new" class="btn btn-ghost" type="button">Save as new timer</button>
+        <button id="btn-setup-delete" class="btn btn-danger" type="button">Delete this timer</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== COLOR PICKER POPOVER ====================== -->
+  <div id="popover-color" class="popover hidden">
+    <div class="popover-backdrop" data-close="color"></div>
+    <div class="popover-content" id="color-swatch-list"></div>
+  </div>
+
+  <!-- ============================= PLAY =============================== -->
+  <section id="screen-play" class="screen hidden" data-screen="play">
+    <div id="play-surface" class="play-surface">
+      <div id="admin-corner" class="admin-corner" aria-label="Hold for admin"></div>
+      <div id="current-panel" class="current-panel">
+        <p id="current-name" class="current-name">—</p>
+        <p id="current-remaining" class="current-remaining">0:00</p>
+        <p id="current-turn-elapsed" class="current-turn-elapsed">turn: 0:00</p>
+      </div>
+      <p class="play-hint">tap anywhere to end turn</p>
+    </div>
+
+    <div id="player-strip" class="player-strip"></div>
+
+    <button id="btn-pause" class="icon-btn icon-btn-pause" type="button" aria-label="Pause">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/></svg>
+    </button>
+    <button id="btn-undo" class="icon-btn icon-btn-undo" type="button" aria-label="Undo last turn" disabled>
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M9 5 3 11l6 6" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 11h11a6 6 0 0 1 0 12h-3" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </section>
+
+  <!-- ========================= PAUSE OVERLAY ========================== -->
+  <div id="overlay-pause" class="overlay overlay-pause hidden">
+    <div class="pause-content">
+      <h2>Paused</h2>
+      <p id="pause-elapsed" class="muted"></p>
+      <label class="sound-toggle">
+        <input type="checkbox" id="chk-sound">
+        <span>Sound alerts</span>
+      </label>
+      <button id="btn-resume-game" class="btn btn-accent btn-large" type="button">Tap to resume</button>
+      <button id="btn-leave-game" class="btn btn-ghost" type="button">Leave game</button>
+    </div>
+  </div>
+
+  <!-- ============================= ADMIN =============================== -->
+  <div id="overlay-admin" class="overlay overlay-admin hidden">
+    <header class="admin-header">
+      <h2>Admin</h2>
+      <button id="btn-admin-close" class="btn btn-ghost" type="button">Close</button>
+    </header>
+
+    <div class="admin-body">
+      <ul id="admin-player-list" class="admin-player-list"></ul>
+
+      <div class="admin-add-player" id="admin-add-player-form" hidden>
+        <input id="admin-new-player-name" type="text" placeholder="Name" maxlength="40">
+        <div class="time-input">
+          <input id="admin-new-player-min" type="number" min="0" max="180" value="10" inputmode="numeric"><span>m</span>
+          <input id="admin-new-player-sec" type="number" min="0" max="59" value="0" inputmode="numeric"><span>s</span>
+        </div>
+        <button id="btn-admin-confirm-add" class="btn btn-primary btn-small" type="button">Add</button>
+        <button id="btn-admin-cancel-add" class="btn btn-ghost btn-small" type="button">Cancel</button>
+      </div>
+      <button id="btn-admin-add-player" class="btn btn-ghost" type="button">+ Add player mid-game</button>
+
+      <div class="admin-actions">
+        <button id="btn-admin-save-profile" class="btn btn-ghost" type="button">Save changes back to profile</button>
+        <button id="btn-admin-end-game" class="btn btn-danger" type="button">End game</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================ SUMMARY =============================== -->
+  <section id="screen-summary" class="screen hidden" data-screen="summary">
+    <header class="summary-header">
+      <h1>Game summary</h1>
+      <p id="summary-profile-name" class="muted"></p>
+    </header>
+    <ul id="summary-list" class="summary-list"></ul>
+    <div class="summary-actions">
+      <button id="btn-summary-home" class="btn btn-ghost btn-large" type="button">Back to home</button>
+      <button id="btn-play-again" class="btn btn-primary btn-large" type="button">Play again</button>
+    </div>
+  </section>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+</div>
+<script src="./app.js"></script>
+</body>
+</html>

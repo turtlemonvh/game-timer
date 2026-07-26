@@ -1,0 +1,12 @@
+{
+  "name": "table-timer-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Puppeteer regression tests for the Table Timer app.",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.0.0"
+  }
+}
