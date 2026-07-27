@@ -46,8 +46,11 @@ var Engine = (function () {
     };
   }
 
-  function newProfilePlayer(name, color, budgetMs) {
-    return { id: uid(), name: name || 'Player', color: color || 'red', budgetMs: clampBudget(budgetMs) };
+  function newProfilePlayer(name, color, budgetMs, incrementMs) {
+    return {
+      id: uid(), name: name || 'Player', color: color || 'red', budgetMs: clampBudget(budgetMs),
+      incrementMs: Math.max(0, Math.round(Number(incrementMs) || 0))
+    };
   }
 
   // ---- GameState -----------------------------------------------------------
@@ -63,6 +66,7 @@ var Engine = (function () {
         color: src.color,
         budgetMs: clampBudget(src.budgetMs),
         committedRemainingMs: clampBudget(src.budgetMs),
+        incrementMs: src.incrementMs != null ? src.incrementMs : (profile.incrementMs || 0),
         turnsTaken: 0,
         totalUsedMs: 0,
         longestTurnMs: 0,
@@ -151,7 +155,9 @@ var Engine = (function () {
     p.turnsTaken += 1;
     var overdraftDelta = Math.max(0, elapsed - Math.max(0, prevRemaining));
     p.overdraftMs += overdraftDelta;
-    if (state.mode === 'total_increment') p.committedRemainingMs += state.incrementMs;
+    if (state.mode === 'total_increment') {
+      p.committedRemainingMs += (p.incrementMs != null ? p.incrementMs : state.incrementMs) || 0;
+    }
   }
 
   function resetAllowanceIfPerTurn(state, playerId) {
@@ -308,12 +314,13 @@ var Engine = (function () {
     return { ok: true };
   }
 
-  function addPlayerMidGame(state, name, color, budgetMs) {
+  function addPlayerMidGame(state, name, color, budgetMs, incrementMs) {
     var id = uid();
     var ms = clampBudget(budgetMs);
     state.players[id] = {
       id: id, name: name || 'Player', color: color || 'stone',
       budgetMs: ms, committedRemainingMs: ms,
+      incrementMs: incrementMs != null ? Math.max(0, Math.round(Number(incrementMs) || 0)) : (state.incrementMs || 0),
       turnsTaken: 0, totalUsedMs: 0, longestTurnMs: 0, overdraftMs: 0,
       active: true, removed: false
     };
@@ -328,7 +335,7 @@ var Engine = (function () {
       .filter(function (id) { return !state.players[id].removed; })
       .map(function (id) {
         var p = state.players[id];
-        return { id: p.id, name: p.name, color: p.color, budgetMs: p.budgetMs };
+        return { id: p.id, name: p.name, color: p.color, budgetMs: p.budgetMs, incrementMs: p.incrementMs || 0 };
       });
     profile.players = players;
     profile.order = players.map(function (p) { return p.id; });
@@ -371,7 +378,8 @@ var Engine = (function () {
    STORAGE — localStorage read/write, JSON in/out.
    ========================================================================= */
 var Storage = (function () {
-  var KEYS = { profiles: 'gt:profiles', activeGame: 'gt:activeGame', lastProfileId: 'gt:lastProfileId' };
+  var KEYS = { profiles: 'gt:profiles', activeGame: 'gt:activeGame', lastProfileId: 'gt:lastProfileId', history: 'gt:history' };
+  var MAX_HISTORY = 30;
 
   function safeGet(key) {
     try { return localStorage.getItem(key); } catch (e) { return null; }
@@ -409,10 +417,28 @@ var Storage = (function () {
   function getLastProfileId() { return safeGet(KEYS.lastProfileId); }
   function setLastProfileId(id) { safeSet(KEYS.lastProfileId, id); }
 
+  function loadHistory() {
+    var raw = safeGet(KEYS.history);
+    if (!raw) return [];
+    try { var arr = JSON.parse(raw); return Array.isArray(arr) ? arr : []; } catch (e) { return []; }
+  }
+  function saveHistory(list) { safeSet(KEYS.history, JSON.stringify(list)); }
+  function addHistoryEntry(entry) {
+    var list = loadHistory();
+    list.unshift(entry);
+    if (list.length > MAX_HISTORY) list.length = MAX_HISTORY;
+    saveHistory(list);
+    return entry;
+  }
+  function deleteHistoryEntry(id) {
+    saveHistory(loadHistory().filter(function (e) { return e.id !== id; }));
+  }
+
   return {
     loadProfiles: loadProfiles, saveProfiles: saveProfiles, saveProfile: saveProfile,
     deleteProfile: deleteProfile, loadActiveGame: loadActiveGame, saveActiveGame: saveActiveGame,
-    clearActiveGame: clearActiveGame, getLastProfileId: getLastProfileId, setLastProfileId: setLastProfileId
+    clearActiveGame: clearActiveGame, getLastProfileId: getLastProfileId, setLastProfileId: setLastProfileId,
+    loadHistory: loadHistory, addHistoryEntry: addHistoryEntry, deleteHistoryEntry: deleteHistoryEntry
   };
 })();
 
@@ -657,10 +683,6 @@ function debounce250() {
   var editingProfileId = null;
   var colorPickerTargetId = null;
   var pendingStartProfileId = null;
-  var preAdminWasPaused = false;
-
-  var longPressTimer = null;
-  var longPressStartXY = null;
 
   // ---- screen switching -------------------------------------------------
 
@@ -683,6 +705,10 @@ function debounce250() {
   }
 
   // ---- HOME ---------------------------------------------------------------
+
+  var TRASH_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">' +
+    '<path d="M5 7h14M10 7V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2m-7 0 1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13" ' +
+    'stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   function buildProfileRow(profile) {
     var li = document.createElement('li');
@@ -714,9 +740,7 @@ function debounce250() {
     deleteBtn.type = 'button';
     deleteBtn.className = 'profile-row-delete';
     deleteBtn.setAttribute('aria-label', 'Delete ' + (profile.name || 'timer'));
-    deleteBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">' +
-      '<path d="M5 7h14M10 7V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2m-7 0 1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13" ' +
-      'stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    deleteBtn.innerHTML = TRASH_SVG;
     deleteBtn.addEventListener('click', function (e) {
       e.stopPropagation();
       if (!confirm('Delete "' + (profile.name || 'Untitled timer') + '"? This cannot be undone.')) return;
@@ -730,51 +754,131 @@ function debounce250() {
     return li;
   }
 
-  function renderHome() {
-    var profiles = Storage.loadProfiles();
-    var all = Object.keys(profiles).map(function (id) { return profiles[id]; });
-    var recent = all.filter(function (p) { return !!p.lastPlayedAt; })
-      .sort(function (a, b) { return b.lastPlayedAt - a.lastPlayedAt; });
-    var templates = all.filter(function (p) { return !p.lastPlayedAt; })
-      .sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+  function buildActiveGameRow(activeGame) {
+    var li = document.createElement('li');
+    li.className = 'profile-row profile-row-active';
 
-    var recentEl = document.getElementById('profile-list-recent');
-    var templatesEl = document.getElementById('profile-list-templates');
-    recentEl.innerHTML = '';
-    templatesEl.innerHTML = '';
-    recent.forEach(function (profile) { recentEl.appendChild(buildProfileRow(profile)); });
-    templates.forEach(function (profile) { templatesEl.appendChild(buildProfileRow(profile)); });
+    var main = document.createElement('button');
+    main.type = 'button';
+    main.className = 'profile-row-main';
+    var badge = document.createElement('p');
+    badge.className = 'profile-row-badge';
+    badge.textContent = 'Game in progress';
+    var name = document.createElement('p');
+    name.className = 'profile-row-name';
+    name.textContent = activeGame.profileName;
+    var meta = document.createElement('p');
+    meta.className = 'profile-row-meta';
+    var curId = Engine.currentPlayerId(activeGame);
+    var curName = (activeGame.players[curId] && activeGame.players[curId].name) || '';
+    meta.textContent = curName + '’s turn · started ' + formatDateShort(activeGame.startedAt);
+    main.appendChild(badge);
+    main.appendChild(name);
+    main.appendChild(meta);
 
-    document.getElementById('heading-recent').classList.toggle('hidden', recent.length === 0);
-    recentEl.classList.toggle('hidden', recent.length === 0);
-    document.getElementById('heading-templates').classList.toggle('hidden', templates.length === 0);
-    templatesEl.classList.toggle('hidden', templates.length === 0);
-
-    document.getElementById('empty-state').classList.toggle('hidden', all.length > 0);
-
-    var activeGame = Storage.loadActiveGame();
-    var resumeCard = document.getElementById('resume-card');
-    if (activeGame) {
-      resumeCard.classList.remove('hidden');
-      document.getElementById('resume-profile-name').textContent = activeGame.profileName;
-      var curId = Engine.currentPlayerId(activeGame);
-      var curName = (activeGame.players[curId] && activeGame.players[curId].name) || '';
-      document.getElementById('resume-detail').textContent =
-        curName + '’s turn · started ' + formatDateShort(activeGame.startedAt);
-    } else {
-      resumeCard.classList.add('hidden');
+    function resumeActiveGame() {
+      currentGame = Storage.loadActiveGame();
+      if (!currentGame) return;
+      soundOn = currentGame.alertsEnabled !== false;
+      AudioFx.unlock();
+      showScreenRaw('play');
+      enterPlayScreen();
     }
+    main.addEventListener('click', resumeActiveGame);
+
+    var resumeBtn = document.createElement('button');
+    resumeBtn.type = 'button';
+    resumeBtn.className = 'btn btn-accent';
+    resumeBtn.textContent = 'Resume';
+    resumeBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      resumeActiveGame();
+    });
+
+    var deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'profile-row-delete';
+    deleteBtn.setAttribute('aria-label', 'Delete in-progress game');
+    deleteBtn.innerHTML = TRASH_SVG;
+    deleteBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (!confirm('Delete this in-progress game? This cannot be undone.')) return;
+      Storage.clearActiveGame();
+      renderHome();
+    });
+
+    li.appendChild(main);
+    li.appendChild(resumeBtn);
+    li.appendChild(deleteBtn);
+    return li;
   }
 
-  document.getElementById('resume-card').addEventListener('click', function () {
+  function buildHistoryRow(entry) {
+    var li = document.createElement('li');
+    li.className = 'profile-row';
+
+    var main = document.createElement('button');
+    main.type = 'button';
+    main.className = 'profile-row-main';
+    var name = document.createElement('p');
+    name.className = 'profile-row-name';
+    name.textContent = entry.state.profileName || 'Untitled timer';
+    var meta = document.createElement('p');
+    meta.className = 'profile-row-meta';
+    var playerCount = Object.keys(entry.state.players).length;
+    meta.textContent = playerCount + ' players · ' + (MODE_LABEL[entry.state.mode] || entry.state.mode) +
+      ' · ' + formatDateShort(entry.endedAt);
+    main.appendChild(name);
+    main.appendChild(meta);
+    main.addEventListener('click', function () { openHistoryDetail(entry); });
+
+    var deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'profile-row-delete';
+    deleteBtn.setAttribute('aria-label', 'Delete ' + (entry.state.profileName || 'game') + ' from history');
+    deleteBtn.innerHTML = TRASH_SVG;
+    deleteBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (!confirm('Delete "' + (entry.state.profileName || 'Untitled timer') + '" from your recent games? This cannot be undone.')) return;
+      Storage.deleteHistoryEntry(entry.id);
+      renderHome();
+    });
+
+    li.appendChild(main);
+    li.appendChild(deleteBtn);
+    return li;
+  }
+
+  function openHistoryDetail(entry) {
+    currentGame = entry.state;
+    renderSummary(currentGame);
+    showScreenRaw('summary');
+  }
+
+  function renderHome() {
+    var profiles = Storage.loadProfiles();
+    var all = Object.keys(profiles).map(function (id) { return profiles[id]; })
+      .sort(function (a, b) { return (b.lastPlayedAt || 0) - (a.lastPlayedAt || 0) || (b.createdAt || 0) - (a.createdAt || 0); });
+
+    var templatesEl = document.getElementById('profile-list-templates');
+    templatesEl.innerHTML = '';
+    all.forEach(function (profile) { templatesEl.appendChild(buildProfileRow(profile)); });
+    document.getElementById('heading-templates').classList.toggle('hidden', all.length === 0);
+    templatesEl.classList.toggle('hidden', all.length === 0);
+
     var activeGame = Storage.loadActiveGame();
-    if (!activeGame) return;
-    currentGame = activeGame;
-    soundOn = currentGame.alertsEnabled !== false;
-    AudioFx.unlock();
-    showScreenRaw('play');
-    enterPlayScreen();
-  });
+    var history = Storage.loadHistory();
+    var recentEl = document.getElementById('profile-list-recent');
+    recentEl.innerHTML = '';
+    if (activeGame) recentEl.appendChild(buildActiveGameRow(activeGame));
+    history.forEach(function (entry) { recentEl.appendChild(buildHistoryRow(entry)); });
+    var hasRecent = !!activeGame || history.length > 0;
+    document.getElementById('heading-recent').classList.toggle('hidden', !hasRecent);
+    recentEl.classList.toggle('hidden', !hasRecent);
+
+    document.getElementById('empty-state').classList.toggle('hidden', all.length > 0);
+  }
+
   document.getElementById('btn-new-profile').addEventListener('click', openSetupNew);
   document.getElementById('btn-create-first').addEventListener('click', openSetupNew);
 
@@ -786,8 +890,9 @@ function debounce250() {
     if (!profile) return;
     pendingStartProfileId = profileId;
     document.getElementById('confirm-profile-name').textContent = profile.name || 'Untitled timer';
-    document.getElementById('confirm-meta').textContent = (MODE_LABEL[profile.mode] || profile.mode) +
-      (profile.mode === 'total_increment' ? ' · +' + formatDuration(profile.incrementMs) + ' per turn' : '');
+    document.getElementById('confirm-meta').textContent = MODE_LABEL[profile.mode] || profile.mode;
+    document.getElementById('input-game-name').value =
+      (profile.name || 'Untitled timer') + ': ' + formatDateShort(Date.now());
     var rosterEl = document.getElementById('confirm-roster');
     rosterEl.innerHTML = '';
     profile.order.forEach(function (id) {
@@ -799,7 +904,9 @@ function debounce250() {
       dot.className = 'color-dot';
       dot.style.background = colorVar(p.color);
       li.appendChild(dot);
-      li.appendChild(document.createTextNode(p.name + ' — ' + formatDuration(p.budgetMs)));
+      var rosterText = p.name + ' — ' + formatDuration(p.budgetMs);
+      if (profile.mode === 'total_increment') rosterText += ' +' + formatDuration(p.incrementMs || 0) + '/turn';
+      li.appendChild(document.createTextNode(rosterText));
       rosterEl.appendChild(li);
     });
     document.getElementById('sheet-confirm-start').classList.remove('hidden');
@@ -812,7 +919,11 @@ function debounce250() {
     var profiles = Storage.loadProfiles();
     var profile = profiles[pendingStartProfileId];
     if (!profile) return;
+    if (Storage.loadActiveGame() &&
+      !confirm('Starting this game will replace your current in-progress game. Press OK to continue.')) return;
     currentGame = Engine.createGameState(profile);
+    var gameName = document.getElementById('input-game-name').value.trim();
+    currentGame.profileName = gameName || profile.name || 'Untitled timer';
     soundOn = currentGame.alertsEnabled;
     profile.lastPlayedAt = Date.now();
     Storage.saveProfile(profile);
@@ -836,8 +947,8 @@ function debounce250() {
       alertsEnabled: true,
       defaultMs: defMs,
       players: [
-        { id: Engine.uid(), name: 'Player 1', color: 'red', budgetMs: defMs },
-        { id: Engine.uid(), name: 'Player 2', color: 'blue', budgetMs: defMs }
+        { id: Engine.uid(), name: 'Player 1', color: 'red', budgetMs: defMs, incrementMs: 30000 },
+        { id: Engine.uid(), name: 'Player 2', color: 'blue', budgetMs: defMs, incrementMs: 30000 }
       ]
     };
   }
@@ -865,7 +976,10 @@ function debounce250() {
       defaultMs: (profile.players[0] && profile.players[0].budgetMs) || formatMinSec(10, 0),
       players: profile.order.map(function (id) {
         var p = profile.players.filter(function (pl) { return pl.id === id; })[0];
-        return { id: p.id, name: p.name, color: p.color, budgetMs: p.budgetMs };
+        return {
+          id: p.id, name: p.name, color: p.color, budgetMs: p.budgetMs,
+          incrementMs: p.incrementMs != null ? p.incrementMs : (profile.incrementMs || 30000)
+        };
       })
     };
     document.getElementById('setup-title').textContent = 'Edit timer';
@@ -931,6 +1045,30 @@ function debounce250() {
       timeWrap.appendChild(minIn); timeWrap.appendChild(mLbl);
       timeWrap.appendChild(secIn); timeWrap.appendChild(sLbl);
 
+      var incRow = document.createElement('div');
+      incRow.className = 'player-setup-row-increment';
+      if (setupState.mode !== 'total_increment') incRow.hidden = true;
+      var incLbl = document.createElement('span');
+      incLbl.className = 'player-setup-row-increment-label';
+      incLbl.textContent = '+per turn';
+      var incWrap = document.createElement('div');
+      incWrap.className = 'time-input';
+      var incMinIn = document.createElement('input');
+      incMinIn.type = 'number'; incMinIn.min = 0; incMinIn.max = 59; incMinIn.inputMode = 'numeric';
+      incMinIn.value = Math.floor((p.incrementMs || 0) / 60000);
+      var incMLbl = document.createElement('span'); incMLbl.textContent = 'm';
+      var incSecIn = document.createElement('input');
+      incSecIn.type = 'number'; incSecIn.min = 0; incSecIn.max = 59; incSecIn.inputMode = 'numeric';
+      incSecIn.value = Math.floor(((p.incrementMs || 0) % 60000) / 1000);
+      var incSLbl = document.createElement('span'); incSLbl.textContent = 's';
+      function syncIncrement() { p.incrementMs = formatMinSec(parseInt(incMinIn.value, 10) || 0, parseInt(incSecIn.value, 10) || 0); }
+      incMinIn.addEventListener('change', syncIncrement);
+      incSecIn.addEventListener('change', syncIncrement);
+      incWrap.appendChild(incMinIn); incWrap.appendChild(incMLbl);
+      incWrap.appendChild(incSecIn); incWrap.appendChild(incSLbl);
+      incRow.appendChild(incLbl);
+      incRow.appendChild(incWrap);
+
       var removeBtn = document.createElement('button');
       removeBtn.type = 'button';
       removeBtn.className = 'row-remove-btn';
@@ -947,6 +1085,7 @@ function debounce250() {
       li.appendChild(nameInput);
       li.appendChild(timeWrap);
       li.appendChild(removeBtn);
+      li.appendChild(incRow);
       listEl.appendChild(li);
     });
   }
@@ -979,7 +1118,8 @@ function debounce250() {
     var color = PALETTE.filter(function (c) { return usedColors.indexOf(c) === -1; })[0] ||
       PALETTE[setupState.players.length % PALETTE.length];
     setupState.players.push({
-      id: Engine.uid(), name: 'Player ' + (setupState.players.length + 1), color: color, budgetMs: setupState.defaultMs
+      id: Engine.uid(), name: 'Player ' + (setupState.players.length + 1), color: color,
+      budgetMs: setupState.defaultMs, incrementMs: setupState.incrementMs
     });
     renderSetupPlayerList();
   });
@@ -999,10 +1139,21 @@ function debounce250() {
     renderSetupPlayerList();
   });
 
+  document.getElementById('btn-apply-default-increment').addEventListener('click', function () {
+    var ms = formatMinSec(
+      parseInt(document.getElementById('input-increment-min').value, 10) || 0,
+      parseInt(document.getElementById('input-increment-sec').value, 10) || 0
+    );
+    setupState.incrementMs = ms;
+    setupState.players.forEach(function (p) { p.incrementMs = ms; });
+    renderSetupPlayerList();
+  });
+
   Array.prototype.forEach.call(document.querySelectorAll('input[name="mode"]'), function (r) {
     r.addEventListener('change', function () {
       setupState.mode = r.value;
       document.getElementById('increment-field-group').hidden = r.value !== 'total_increment';
+      renderSetupPlayerList();
     });
   });
 
@@ -1018,7 +1169,11 @@ function debounce250() {
   function buildProfileFromSetup(asNew) {
     collectSetupFromForm();
     var players = setupState.players.map(function (p) {
-      return { id: p.id, name: (p.name || 'Player').trim() || 'Player', color: p.color, budgetMs: Engine.clampBudget(p.budgetMs) };
+      return {
+        id: p.id, name: (p.name || 'Player').trim() || 'Player', color: p.color,
+        budgetMs: Engine.clampBudget(p.budgetMs),
+        incrementMs: Math.max(0, Math.round(Number(p.incrementMs) || 0))
+      };
     });
     var now = Date.now();
     var existing = (editingProfileId && !asNew) ? Storage.loadProfiles()[editingProfileId] : null;
@@ -1218,7 +1373,6 @@ function debounce250() {
 
   document.getElementById('play-surface').addEventListener('pointerup', function (e) {
     if (!currentGame || Engine.isPaused(currentGame)) return;
-    if (e.target.closest('#admin-corner')) return;
     if (!canEndTurn()) return;
     Engine.endTurn(currentGame);
     onTurnChanged();
@@ -1252,6 +1406,11 @@ function debounce250() {
     showScreenRaw('home');
     renderHome();
   });
+  document.getElementById('btn-pause-end-game').addEventListener('click', function () {
+    if (!confirm('End the game and show the summary?')) return;
+    document.getElementById('overlay-pause').classList.add('hidden');
+    endGame();
+  });
 
   document.getElementById('btn-undo').addEventListener('click', function () {
     if (!currentGame || !currentGame.undoStack.length) return;
@@ -1259,35 +1418,24 @@ function debounce250() {
     onTurnChanged();
   });
 
-  var adminCorner = document.getElementById('admin-corner');
-  function cancelLongPress() { clearTimeout(longPressTimer); longPressTimer = null; longPressStartXY = null; }
-  adminCorner.addEventListener('pointerdown', function (e) {
-    longPressStartXY = { x: e.clientX, y: e.clientY };
-    clearTimeout(longPressTimer);
-    longPressTimer = setTimeout(function () { cancelLongPress(); openAdmin(); }, 600);
-  });
-  adminCorner.addEventListener('pointerup', cancelLongPress);
-  adminCorner.addEventListener('pointercancel', cancelLongPress);
-  adminCorner.addEventListener('pointermove', function (e) {
-    if (!longPressStartXY) return;
-    var dx = e.clientX - longPressStartXY.x, dy = e.clientY - longPressStartXY.y;
-    if (Math.sqrt(dx * dx + dy * dy) > 12) cancelLongPress();
-  });
-
   // ---- ADMIN -------------------------------------------------------------
+  // Only reachable from the pause overlay, so the game is always already
+  // paused (and stays paused, visibly, via that same overlay) while admin
+  // is open — no separate implicit pause/resume bookkeeping needed here.
 
   function openAdmin() {
     if (!currentGame) return;
-    preAdminWasPaused = Engine.isPaused(currentGame);
-    if (!preAdminWasPaused) { Engine.pauseGame(currentGame); persist(); }
+    if (!Engine.isPaused(currentGame)) { Engine.pauseGame(currentGame); persist(); }
+    document.getElementById('overlay-pause').classList.add('hidden');
     document.getElementById('admin-add-player-form').hidden = true;
     renderAdmin();
     document.getElementById('overlay-admin').classList.remove('hidden');
   }
   function closeAdmin() {
     document.getElementById('overlay-admin').classList.add('hidden');
-    if (!preAdminWasPaused && currentGame) { Engine.resumeGame(currentGame); persist(); }
+    if (currentGame) showPauseOverlay();
   }
+  document.getElementById('btn-open-admin').addEventListener('click', openAdmin);
   document.getElementById('btn-admin-close').addEventListener('click', closeAdmin);
 
   function renderAdmin() {
@@ -1431,6 +1579,9 @@ function debounce250() {
 
   function endGame() {
     renderSummary(currentGame);
+    var stateCopy = JSON.parse(JSON.stringify(currentGame));
+    delete stateCopy.undoStack;
+    Storage.addHistoryEntry({ id: Engine.uid(), endedAt: Date.now(), state: stateCopy });
     Storage.clearActiveGame();
     showScreenRaw('summary');
   }

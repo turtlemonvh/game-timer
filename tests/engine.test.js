@@ -12,7 +12,8 @@ function freshGame(Engine, mode, playerSpecs, incrementMs) {
   const profile = Engine.newProfile();
   profile.mode = mode;
   if (incrementMs != null) profile.incrementMs = incrementMs;
-  const players = playerSpecs.map(([name, color, budgetMs]) => Engine.newProfilePlayer(name, color, budgetMs));
+  const players = playerSpecs.map(([name, color, budgetMs, playerIncrementMs]) =>
+    Engine.newProfilePlayer(name, color, budgetMs, playerIncrementMs));
   profile.players = players;
   profile.order = players.map((p) => p.id);
   const state = Engine.createGameState(profile);
@@ -149,14 +150,45 @@ test('per_turn mode resets the allowance every turn', async (t) => {
 test('total_increment mode adds time back after subtracting elapsed', () => {
   const { Engine, advance } = loadEngine();
   const { state, players } = freshGame(Engine, 'total_increment', [
-    ['U1', 'red', 60000],
-    ['U2', 'blue', 60000]
-  ], 5000);
+    ['U1', 'red', 60000, 5000],
+    ['U2', 'blue', 60000, 5000]
+  ]);
   const [u1] = players;
 
   advance(10000);
   Engine.endTurn(state);
   assert.equal(state.players[u1.id].committedRemainingMs, 60000 - 10000 + 5000);
+});
+
+test('total_increment mode supports different per-player increments', () => {
+  const { Engine, advance } = loadEngine();
+  const { state, players } = freshGame(Engine, 'total_increment', [
+    ['Slow', 'red', 60000, 5000],
+    ['Fast', 'blue', 60000, 20000]
+  ]);
+  const [slow, fast] = players;
+
+  advance(1000);
+  Engine.endTurn(state); // Slow's turn ends
+  assert.equal(state.players[slow.id].committedRemainingMs, 60000 - 1000 + 5000);
+
+  advance(1000);
+  Engine.endTurn(state); // Fast's turn ends
+  assert.equal(state.players[fast.id].committedRemainingMs, 60000 - 1000 + 20000);
+});
+
+test('total_increment falls back to the profile default increment for players missing their own value (old saved data)', () => {
+  const { Engine, advance } = loadEngine();
+  const profile = Engine.newProfile();
+  profile.mode = 'total_increment';
+  profile.incrementMs = 7000;
+  profile.players = [{ id: 'p1', name: 'Old', color: 'red', budgetMs: 60000 }]; // no incrementMs field
+  profile.order = ['p1'];
+  const state = Engine.createGameState(profile);
+
+  advance(1000);
+  Engine.endTurn(state);
+  assert.equal(state.players.p1.committedRemainingMs, 60000 - 1000 + 7000);
 });
 
 test('jumpToPlayer', async (t) => {

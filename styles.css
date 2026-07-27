@@ -117,23 +117,6 @@ button, input {
 }
 .wordmark { font-size: 26px; margin: 0; letter-spacing: -0.01em; }
 
-.resume-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--gap);
-  background: var(--felt-raised);
-  border: 1px solid var(--c-amber);
-  border-radius: var(--radius);
-  padding: 16px 18px;
-  margin: 8px 0 18px;
-  text-align: left;
-  cursor: pointer;
-}
-.resume-label { margin: 0 0 2px; color: var(--c-amber); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
-.resume-info h2 { margin: 0 0 2px; font-size: 19px; }
-.resume-info p { margin: 0; font-size: 13px; }
-
 .list-heading {
   font-size: 13px;
   text-transform: uppercase;
@@ -160,6 +143,9 @@ button, input {
   background: none; border: none; color: var(--muted); padding: 8px; cursor: pointer; font-size: 20px; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center;
 }
+
+.profile-row-active { border: 1px solid var(--c-amber); }
+.profile-row-badge { margin: 0 0 2px; color: var(--c-amber); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
 
 .empty-state { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px 0; }
 
@@ -264,6 +250,7 @@ input[type="checkbox"] { width: 22px; height: 22px; }
 .player-setup-list { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .player-setup-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   background: var(--felt-raised);
@@ -275,6 +262,15 @@ input[type="checkbox"] { width: 22px; height: 22px; }
 .player-setup-row input[type="text"] { flex: 1; min-width: 0; padding: 9px 10px; }
 .player-setup-row .time-input input { width: 46px; padding: 9px 4px; font-size: 14px; }
 .row-remove-btn { background: none; border: none; color: var(--muted); font-size: 20px; padding: 6px 8px; cursor: pointer; }
+
+.player-setup-row-increment {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 76px;
+}
+.player-setup-row-increment-label { font-size: 12px; color: var(--muted); }
 
 .setup-danger-zone { flex-direction: row; gap: 12px; }
 .setup-danger-zone .btn { flex: 1; }
@@ -291,8 +287,6 @@ input[type="checkbox"] { width: 22px; height: 22px; }
   justify-content: center;
   padding: 20px;
 }
-
-.admin-corner { position: absolute; top: 0; right: 0; width: 88px; height: 88px; z-index: 6; }
 
 .current-panel {
   text-align: center;
@@ -397,7 +391,7 @@ input[type="checkbox"] { width: 22px; height: 22px; }
 .overlay-pause { align-items: center; justify-content: center; }
 .pause-content { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 20px; }
 .pause-content h2 { font-size: 30px; margin: 0; }
-.sound-toggle { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--muted); margin-bottom: 10px; }
+.pause-content .btn { width: min(280px, 80vw); }
 
 .overlay-admin { padding: env(safe-area-inset-top, 0) 0 0; }
 .admin-header {
@@ -432,6 +426,8 @@ input[type="checkbox"] { width: 22px; height: 22px; }
 .admin-add-player input[type="text"] { flex: 1; min-width: 100px; padding: 9px 10px; }
 
 .admin-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.admin-actions-row { flex-direction: row; }
+.admin-actions-row .btn { flex: 1; }
 
 /* ---------------------------------------------------------------- summary */
 

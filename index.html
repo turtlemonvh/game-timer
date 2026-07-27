@@ -23,19 +23,10 @@
       <button id="btn-new-profile" class="btn btn-primary" type="button">New timer</button>
     </header>
 
-    <button id="resume-card" class="resume-card hidden" type="button">
-      <div class="resume-info">
-        <p class="resume-label">Game in progress</p>
-        <h2 id="resume-profile-name"></h2>
-        <p id="resume-detail" class="muted"></p>
-      </div>
-      <span class="btn btn-accent" aria-hidden="true">Resume</span>
-    </button>
-
     <h2 id="heading-recent" class="list-heading hidden">Recent games</h2>
     <ul id="profile-list-recent" class="profile-list"></ul>
 
-    <h2 id="heading-templates" class="list-heading hidden">Templates</h2>
+    <h2 id="heading-templates" class="list-heading hidden">Game templates</h2>
     <ul id="profile-list-templates" class="profile-list"></ul>
 
     <div id="empty-state" class="empty-state hidden">
@@ -49,6 +40,10 @@
     <div class="sheet-content">
       <h2 id="confirm-profile-name"></h2>
       <p id="confirm-meta" class="muted"></p>
+      <label class="field">
+        <span class="field-label">Game name</span>
+        <input id="input-game-name" type="text" maxlength="60">
+      </label>
       <ul id="confirm-roster" class="roster-list"></ul>
       <div class="sheet-actions">
         <button id="btn-confirm-cancel" class="btn btn-ghost" type="button">Cancel</button>
@@ -91,11 +86,12 @@
       </fieldset>
 
       <div class="field" id="increment-field-group" hidden>
-        <span class="field-label">Increment per turn</span>
+        <span class="field-label">Default increment per turn</span>
         <div class="time-input">
           <input id="input-increment-min" type="number" min="0" max="59" value="0" inputmode="numeric"><span>m</span>
           <input id="input-increment-sec" type="number" min="0" max="59" value="30" inputmode="numeric"><span>s</span>
         </div>
+        <button id="btn-apply-default-increment" class="btn btn-ghost btn-small" type="button">Apply to all players</button>
       </div>
 
       <div class="field">
@@ -137,7 +133,6 @@
   <!-- ============================= PLAY =============================== -->
   <section id="screen-play" class="screen hidden" data-screen="play">
     <div id="play-surface" class="play-surface">
-      <div id="admin-corner" class="admin-corner" aria-label="Hold for admin"></div>
       <div id="current-panel" class="current-panel">
         <p id="current-name" class="current-name">—</p>
         <p id="current-remaining" class="current-remaining">0:00</p>
@@ -161,12 +156,10 @@
     <div class="pause-content">
       <h2>Paused</h2>
       <p id="pause-elapsed" class="muted"></p>
-      <label class="sound-toggle">
-        <input type="checkbox" id="chk-sound">
-        <span>Sound alerts</span>
-      </label>
-      <button id="btn-resume-game" class="btn btn-accent btn-large" type="button">Tap to resume</button>
-      <button id="btn-leave-game" class="btn btn-ghost" type="button">Leave game</button>
+      <button id="btn-resume-game" class="btn btn-accent btn-large" type="button">Resume</button>
+      <button id="btn-open-admin" class="btn btn-ghost btn-large" type="button">Admin</button>
+      <button id="btn-pause-end-game" class="btn btn-ghost btn-large" type="button">End game</button>
+      <button id="btn-leave-game" class="btn btn-ghost btn-large" type="button">Leave game</button>
     </div>
   </div>
 
@@ -174,7 +167,6 @@
   <div id="overlay-admin" class="overlay overlay-admin hidden">
     <header class="admin-header">
       <h2>Admin</h2>
-      <button id="btn-admin-close" class="btn btn-ghost" type="button">Close</button>
     </header>
 
     <div class="admin-body">
@@ -191,8 +183,16 @@
       </div>
       <button id="btn-admin-add-player" class="btn btn-ghost" type="button">+ Add player mid-game</button>
 
+      <label class="field field-row">
+        <span class="field-label">Sound alerts</span>
+        <input id="chk-sound" type="checkbox">
+      </label>
+
       <div class="admin-actions">
         <button id="btn-admin-save-profile" class="btn btn-ghost" type="button">Save changes back to profile</button>
+      </div>
+      <div class="admin-actions admin-actions-row">
+        <button id="btn-admin-close" class="btn btn-ghost" type="button">Close</button>
         <button id="btn-admin-end-game" class="btn btn-danger" type="button">End game</button>
       </div>
     </div>
