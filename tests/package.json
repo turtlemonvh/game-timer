@@ -1,8 +1,8 @@
 {
-  "name": "table-timer-tests",
+  "name": "game-timer-tests",
   "private": true,
   "version": "1.0.0",
-  "description": "Puppeteer regression tests for the Table Timer app.",
+  "description": "Puppeteer regression tests for the Game Timer app.",
   "scripts": {
     "test": "node --test"
   },

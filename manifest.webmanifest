@@ -1,6 +1,6 @@
 {
-  "name": "Table Timer",
-  "short_name": "Table Timer",
+  "name": "Game Timer",
+  "short_name": "Game Timer",
   "description": "A chess-clock-style turn timer for tabletop games.",
   "start_url": "./index.html",
   "scope": "./",
