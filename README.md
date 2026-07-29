@@ -105,9 +105,10 @@ throttling, tablet sleep, and page reloads mid-turn without losing time.
 ## Data
 
 Everything lives in `localStorage` on the device — there's no server, no
-sync, no accounts. Four keys: `gt:profiles` (templates), `gt:activeGame`
-(the in-progress game, if any), `gt:history` (recently finished games), and
-`gt:lastProfileId`.
+sync, no accounts. Five keys: `gt:profiles` (templates), `gt:activeGame`
+(the in-progress game, if any), `gt:history` (recently finished games),
+`gt:lastProfileId`, and `gt:seededDefault` (marks whether the first-launch
+quick-start template has been seeded, so it only ever appears once).
 
 ## Deploying
 
