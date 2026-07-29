@@ -9,11 +9,7 @@ the implementation contract.
 "Game Timer" is a static PWA — zero build step, zero framework, zero CI.
 `index.html` + `styles.css` + `app.js` + `manifest.webmanifest` + `sw.js`,
 served straight from the repo root by GitHub Pages off `main`. See
-`README.md` for what it does and how it's used. `game-timer-spec.md` is the
-**original build spec, now historical** — it's still accurate about
-architecture/constraints but stale about features (it says "three
-localStorage keys"; there are five now, see below). Don't trust it for
-current behavior.
+`README.md` for what it does and how it's used.
 
 ## Hard invariants
 
@@ -46,10 +42,11 @@ how expensive a mistake is:
 5. **`app.js` is ES5, non-module, and must run from `file://`.** No
    `const`/`let`/arrow functions/`import`/template literals in it — it's
    plain `var` and function expressions throughout (verified: 277 `var`,
-   zero `const`/`let`/arrows). This isn't a style preference; `game-timer-spec.md`
-   states the app must run correctly opened directly from `file://`, which
-   rules out ES modules. The test files are normal modern Node — different
-   rules apply there.
+   zero `const`/`let`/arrows). This isn't a style preference: `index.html`
+   loads it as a plain `<script src="./app.js">`, not `type="module"`, and
+   there's no bundler in the repo, so it has to work opened directly as a
+   local file, not just served over HTTP. The test files are normal modern
+   Node — different rules apply there.
 
 6. **Bump `CACHE_NAME` in `sw.js` in the same commit as any change to
    `index.html`/`app.js`/`styles.css`/`manifest.webmanifest`/`icons/`.** It's
@@ -247,7 +244,5 @@ Do it inline, not as a subagent:
 
 ## Docs to keep in sync
 
-Update `README.md` (feature descriptions, and its storage-keys list — it
-currently says "four keys," it's five, missing `gt:seededDefault`) and
-`tests/README.md` alongside behavior changes. Leave `game-timer-spec.md`
-alone — it's frozen history, not a living doc.
+Update `README.md` (feature descriptions, including the storage-keys list)
+and `tests/README.md` alongside behavior changes.
