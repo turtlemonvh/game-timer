@@ -6,6 +6,7 @@
   --muted:       #8FA69A;
   --overdraft:   #C6483C;
   --overdraft-bg: #3A211D;
+  --warning-bg:  #4A3610;
 
   --c-red:    #D9534F;
   --c-blue:   #3D7EA6;
@@ -218,6 +219,7 @@ button, input {
 .field-row { flex-direction: row; align-items: center; justify-content: space-between; }
 .field-label { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; }
 .field-label-row { display: flex; align-items: center; justify-content: space-between; }
+.field-hint { font-size: 12px; color: var(--muted); margin: 0; }
 
 input[type="text"], input[type="number"] {
   background: var(--felt-raised);
@@ -259,6 +261,16 @@ input[type="checkbox"] { width: 22px; height: 22px; }
 }
 .drag-handle { color: var(--muted); padding: 8px; touch-action: none; cursor: grab; font-size: 18px; line-height: 1; }
 .player-setup-row.dragging { opacity: 0.5; }
+.player-setup-name-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  padding: 3px;
+}
 .player-setup-row input[type="text"] { flex: 1; min-width: 0; padding: 9px 10px; }
 .player-setup-row .time-input input { width: 46px; padding: 9px 4px; font-size: 14px; }
 .row-remove-btn { background: none; border: none; color: var(--muted); font-size: 20px; padding: 6px 8px; cursor: pointer; }
@@ -298,6 +310,13 @@ input[type="checkbox"] { width: 22px; height: 22px; }
   margin: 0 0 6px;
   color: var(--muted);
 }
+.current-name .color-dot {
+  display: inline-block;
+  width: 0.65em;
+  height: 0.65em;
+  margin-right: 0.3em;
+  vertical-align: middle;
+}
 .current-remaining {
   font-size: clamp(72px, 22vw, 190px);
   font-weight: 800;
@@ -330,6 +349,9 @@ input[type="checkbox"] { width: 22px; height: 22px; }
 
 .crossfade { animation: crossfade 150ms ease; }
 @keyframes crossfade { from { opacity: 0; } to { opacity: 1; } }
+
+.warning-flash { animation: warning-flash 500ms ease-out; }
+@keyframes warning-flash { 0% { background: var(--warning-bg); } 100% { background: transparent; } }
 
 .player-strip {
   display: flex;
@@ -465,6 +487,7 @@ input[type="checkbox"] { width: 22px; height: 22px; }
 
 @media (prefers-reduced-motion: reduce) {
   .crossfade { animation: none; }
+  .warning-flash { animation: none; }
   .current-panel { transition: none; }
   .strip-bar { transition: none; }
 }

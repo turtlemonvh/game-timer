@@ -95,7 +95,7 @@
       </div>
 
       <div class="field">
-        <span class="field-label">Default budget per player</span>
+        <span class="field-label" id="label-default-budget">Default budget per player</span>
         <div class="time-input">
           <input id="input-default-min" type="number" min="0" max="180" value="10" inputmode="numeric"><span>m</span>
           <input id="input-default-sec" type="number" min="0" max="59" value="0" inputmode="numeric"><span>s</span>
@@ -107,6 +107,18 @@
         <span class="field-label">Sound alerts by default</span>
         <input id="chk-alerts-enabled" type="checkbox" checked>
       </label>
+
+      <div class="field" id="warning-field-group">
+        <span class="field-label">Low-time warning at</span>
+        <div class="time-input">
+          <input id="input-warning-sec" type="number" min="0" value="10" inputmode="numeric"><span>s</span>
+        </div>
+      </div>
+      <label class="field field-row" id="warning-linked-row" hidden>
+        <span class="field-label">Keep warning at half the per-turn allowance</span>
+        <input id="chk-warning-linked" type="checkbox" checked>
+      </label>
+      <p class="field-hint">When the current player's time remaining hits this, the screen pulses amber and beeps — faster as it gets closer to zero.</p>
 
       <div class="field">
         <div class="field-label-row">
@@ -134,7 +146,7 @@
   <section id="screen-play" class="screen hidden" data-screen="play">
     <div id="play-surface" class="play-surface">
       <div id="current-panel" class="current-panel">
-        <p id="current-name" class="current-name">—</p>
+        <p id="current-name" class="current-name"><span id="current-name-dot" class="color-dot"></span><span id="current-name-text">—</span></p>
         <p id="current-remaining" class="current-remaining">0:00</p>
         <p id="current-turn-elapsed" class="current-turn-elapsed">turn: 0:00</p>
       </div>

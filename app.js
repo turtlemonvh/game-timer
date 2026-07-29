@@ -40,10 +40,30 @@ var Engine = (function () {
       lastPlayedAt: null,
       mode: 'total',
       incrementMs: 30000,
+      warningMs: 10000,
       alertsEnabled: true,
       players: [],
       order: []
     };
+  }
+
+  // Low-time warning defaults: a fixed 10s for modes with a whole-game
+  // budget, but half the per-turn allowance for "per turn" games, since a
+  // 10s warning would be meaningless (or the whole turn) on a short clock.
+  function defaultWarningMs(mode, turnBudgetMs) {
+    if (mode === 'per_turn') return Math.max(0, Math.round((turnBudgetMs || 0) / 2));
+    return 10000;
+  }
+
+  // Repeat cadence for the low-time warning (beep + screen pulse), given how
+  // much time the current player has left. null means "not in the warning
+  // zone" — either still above the threshold, or already in overdraft
+  // (negative), which has its own distinct always-on red/buzz treatment.
+  function warningCadenceMs(remainingMs, warningMs) {
+    if (remainingMs < 0 || remainingMs > warningMs) return null;
+    if (remainingMs > 30000) return 5000;
+    if (remainingMs > 10000) return 2000;
+    return 1000;
   }
 
   function newProfilePlayer(name, color, budgetMs, incrementMs) {
@@ -81,6 +101,7 @@ var Engine = (function () {
       profileName: profile.name,
       mode: profile.mode,
       incrementMs: profile.incrementMs || 0,
+      warningMs: profile.warningMs != null ? profile.warningMs : 10000,
       alertsEnabled: profile.alertsEnabled !== false,
       players: players,
       order: profile.order.slice(),
@@ -349,6 +370,8 @@ var Engine = (function () {
     shuffle: shuffle,
     newProfile: newProfile,
     newProfilePlayer: newProfilePlayer,
+    defaultWarningMs: defaultWarningMs,
+    warningCadenceMs: warningCadenceMs,
     createGameState: createGameState,
     remainingMs: remainingMs,
     turnElapsedMs: turnElapsedMs,
@@ -378,7 +401,10 @@ var Engine = (function () {
    STORAGE — localStorage read/write, JSON in/out.
    ========================================================================= */
 var Storage = (function () {
-  var KEYS = { profiles: 'gt:profiles', activeGame: 'gt:activeGame', lastProfileId: 'gt:lastProfileId', history: 'gt:history' };
+  var KEYS = {
+    profiles: 'gt:profiles', activeGame: 'gt:activeGame', lastProfileId: 'gt:lastProfileId',
+    history: 'gt:history', seededDefault: 'gt:seededDefault'
+  };
   var MAX_HISTORY = 30;
 
   function safeGet(key) {
@@ -416,6 +442,8 @@ var Storage = (function () {
   function clearActiveGame() { safeRemove(KEYS.activeGame); }
   function getLastProfileId() { return safeGet(KEYS.lastProfileId); }
   function setLastProfileId(id) { safeSet(KEYS.lastProfileId, id); }
+  function hasSeededDefault() { return safeGet(KEYS.seededDefault) === '1'; }
+  function markSeededDefault() { safeSet(KEYS.seededDefault, '1'); }
 
   function loadHistory() {
     var raw = safeGet(KEYS.history);
@@ -438,7 +466,8 @@ var Storage = (function () {
     loadProfiles: loadProfiles, saveProfiles: saveProfiles, saveProfile: saveProfile,
     deleteProfile: deleteProfile, loadActiveGame: loadActiveGame, saveActiveGame: saveActiveGame,
     clearActiveGame: clearActiveGame, getLastProfileId: getLastProfileId, setLastProfileId: setLastProfileId,
-    loadHistory: loadHistory, addHistoryEntry: addHistoryEntry, deleteHistoryEntry: deleteHistoryEntry
+    loadHistory: loadHistory, addHistoryEntry: addHistoryEntry, deleteHistoryEntry: deleteHistoryEntry,
+    hasSeededDefault: hasSeededDefault, markSeededDefault: markSeededDefault
   };
 })();
 
@@ -527,20 +556,12 @@ var AudioFx = (function () {
     if (c && c.state === 'suspended') c.resume();
   }
 
-  // gentle two-note chime
-  function play60s() {
+  // short, crisp beep — repeated at a ramping cadence by the low-time warning
+  // as a player's turn runs down toward zero.
+  function playWarningBeep() {
     var c = ensureCtx(); if (!c) return;
     var t = c.currentTime;
-    tone(880, t, 0.16, 0.12);
-    tone(660, t + 0.13, 0.2, 0.12);
-  }
-  // three quick ticks — more urgent
-  function play10s() {
-    var c = ensureCtx(); if (!c) return;
-    var t = c.currentTime;
-    tone(720, t, 0.09, 0.16, 'triangle');
-    tone(720, t + 0.16, 0.09, 0.16, 'triangle');
-    tone(720, t + 0.32, 0.09, 0.16, 'triangle');
+    tone(740, t, 0.12, 0.16, 'triangle');
   }
   // distinct low descending buzz at zero
   function playZero() {
@@ -559,13 +580,7 @@ var AudioFx = (function () {
     osc.stop(t + 0.52);
   }
 
-  function playThreshold(th) {
-    if (th === 60000) play60s();
-    else if (th === 10000) play10s();
-    else if (th === 0) playZero();
-  }
-
-  return { unlock: unlock, playThreshold: playThreshold };
+  return { unlock: unlock, playZero: playZero, playWarningBeep: playWarningBeep };
 })();
 
 /* =========================================================================
@@ -676,7 +691,8 @@ function debounce250() {
   var rafId = null;
   var stripEls = {};
   var prevDisplay = { current: null, elapsed: null };
-  var alertFired = { key: null, thresholds: {} };
+  var zeroFired = { key: null, fired: false };
+  var warningState = { key: null, lastFireAt: 0 };
   var canEndTurn = debounce250();
 
   var setupState = null;
@@ -937,6 +953,10 @@ function debounce250() {
 
   // ---- SETUP ---------------------------------------------------------------
 
+  function defaultBudgetMsForMode(mode) {
+    return mode === 'per_turn' ? 10000 : formatMinSec(10, 0);
+  }
+
   function makeDefaultSetup() {
     var defMs = formatMinSec(10, 0);
     return {
@@ -944,8 +964,12 @@ function debounce250() {
       name: '',
       mode: 'total',
       incrementMs: 30000,
+      warningMs: 10000,
+      warningTouched: false,
+      warningLinked: true,
       alertsEnabled: true,
       defaultMs: defMs,
+      defaultMsTouched: false,
       players: [
         { id: Engine.uid(), name: 'Player 1', color: 'red', budgetMs: defMs, incrementMs: 30000 },
         { id: Engine.uid(), name: 'Player 2', color: 'blue', budgetMs: defMs, incrementMs: 30000 }
@@ -967,13 +991,21 @@ function debounce250() {
     var profile = profiles[profileId];
     if (!profile) return;
     editingProfileId = profileId;
+    var editDefaultMs = (profile.players[0] && profile.players[0].budgetMs) || formatMinSec(10, 0);
+    var editWarningMs = profile.warningMs != null ? profile.warningMs : Engine.defaultWarningMs(profile.mode, editDefaultMs);
     setupState = {
       id: profile.id,
       name: profile.name,
       mode: profile.mode,
       incrementMs: profile.incrementMs || 30000,
+      warningMs: editWarningMs,
+      warningTouched: true,
+      // Guess "linked" if the saved value still matches the half-allowance rule —
+      // keeps the checkbox checked for timers that never diverged from the default.
+      warningLinked: editWarningMs === Engine.defaultWarningMs('per_turn', editDefaultMs),
       alertsEnabled: profile.alertsEnabled !== false,
-      defaultMs: (profile.players[0] && profile.players[0].budgetMs) || formatMinSec(10, 0),
+      defaultMs: editDefaultMs,
+      defaultMsTouched: true,
       players: profile.order.map(function (id) {
         var p = profile.players.filter(function (pl) { return pl.id === id; })[0];
         return {
@@ -988,6 +1020,19 @@ function debounce250() {
     showScreenRaw('setup');
   }
 
+  function updateDefaultBudgetLabel() {
+    document.getElementById('label-default-budget').textContent =
+      setupState.mode === 'per_turn' ? 'Default increment per player' : 'Default budget per player';
+  }
+
+  function renderWarningFields() {
+    var isPerTurn = setupState.mode === 'per_turn';
+    document.getElementById('input-warning-sec').value = Math.round(setupState.warningMs / 1000);
+    document.getElementById('warning-linked-row').hidden = !isPerTurn;
+    document.getElementById('chk-warning-linked').checked = setupState.warningLinked;
+    document.getElementById('input-warning-sec').disabled = isPerTurn && setupState.warningLinked;
+  }
+
   function fillSetupForm() {
     document.getElementById('input-profile-name').value = setupState.name;
     Array.prototype.forEach.call(document.querySelectorAll('input[name="mode"]'), function (r) {
@@ -999,6 +1044,8 @@ function debounce250() {
     document.getElementById('input-default-min').value = Math.floor(setupState.defaultMs / 60000);
     document.getElementById('input-default-sec').value = Math.floor((setupState.defaultMs % 60000) / 1000);
     document.getElementById('chk-alerts-enabled').checked = setupState.alertsEnabled;
+    updateDefaultBudgetLabel();
+    renderWarningFields();
     renderSetupPlayerList();
   }
 
@@ -1013,6 +1060,10 @@ function debounce250() {
       var handle = document.createElement('span');
       handle.className = 'drag-handle';
       handle.textContent = '⠿';
+
+      var nameChip = document.createElement('div');
+      nameChip.className = 'player-setup-name-chip';
+      nameChip.style.borderColor = colorVar(p.color);
 
       var colorBtn = document.createElement('button');
       colorBtn.type = 'button';
@@ -1029,6 +1080,9 @@ function debounce250() {
       nameInput.maxLength = 40;
       nameInput.addEventListener('input', function () { p.name = nameInput.value; });
 
+      nameChip.appendChild(colorBtn);
+      nameChip.appendChild(nameInput);
+
       var timeWrap = document.createElement('div');
       timeWrap.className = 'time-input';
       var minIn = document.createElement('input');
@@ -1044,6 +1098,12 @@ function debounce250() {
       secIn.addEventListener('change', syncBudget);
       timeWrap.appendChild(minIn); timeWrap.appendChild(mLbl);
       timeWrap.appendChild(secIn); timeWrap.appendChild(sLbl);
+      if (setupState.mode === 'per_turn') {
+        var perTurnLbl = document.createElement('span');
+        perTurnLbl.className = 'player-setup-row-increment-label';
+        perTurnLbl.textContent = '+per turn';
+        timeWrap.appendChild(perTurnLbl);
+      }
 
       var incRow = document.createElement('div');
       incRow.className = 'player-setup-row-increment';
@@ -1081,8 +1141,7 @@ function debounce250() {
       });
 
       li.appendChild(handle);
-      li.appendChild(colorBtn);
-      li.appendChild(nameInput);
+      li.appendChild(nameChip);
       li.appendChild(timeWrap);
       li.appendChild(removeBtn);
       li.appendChild(incRow);
@@ -1129,14 +1188,47 @@ function debounce250() {
     renderSetupPlayerList();
   });
 
+  function relinkWarningIfNeeded() {
+    if (setupState.mode === 'per_turn' && setupState.warningLinked) {
+      setupState.warningMs = Engine.defaultWarningMs('per_turn', setupState.defaultMs);
+      renderWarningFields();
+    }
+  }
+
   document.getElementById('btn-apply-default-budget').addEventListener('click', function () {
     var ms = formatMinSec(
       parseInt(document.getElementById('input-default-min').value, 10) || 0,
       parseInt(document.getElementById('input-default-sec').value, 10) || 0
     );
     setupState.defaultMs = ms;
+    setupState.defaultMsTouched = true;
     setupState.players.forEach(function (p) { p.budgetMs = ms; });
+    relinkWarningIfNeeded();
     renderSetupPlayerList();
+  });
+
+  function syncDefaultBudgetFromInputs() {
+    setupState.defaultMs = formatMinSec(
+      parseInt(document.getElementById('input-default-min').value, 10) || 0,
+      parseInt(document.getElementById('input-default-sec').value, 10) || 0
+    );
+    setupState.defaultMsTouched = true;
+    relinkWarningIfNeeded();
+  }
+  document.getElementById('input-default-min').addEventListener('change', syncDefaultBudgetFromInputs);
+  document.getElementById('input-default-sec').addEventListener('change', syncDefaultBudgetFromInputs);
+
+  function syncWarningFromInputs() {
+    setupState.warningMs = (parseInt(document.getElementById('input-warning-sec').value, 10) || 0) * 1000;
+    if (setupState.mode === 'per_turn') setupState.warningLinked = false;
+    else setupState.warningTouched = true;
+  }
+  document.getElementById('input-warning-sec').addEventListener('change', syncWarningFromInputs);
+
+  document.getElementById('chk-warning-linked').addEventListener('change', function (e) {
+    setupState.warningLinked = e.target.checked;
+    if (setupState.warningLinked) setupState.warningMs = Engine.defaultWarningMs('per_turn', setupState.defaultMs);
+    renderWarningFields();
   });
 
   document.getElementById('btn-apply-default-increment').addEventListener('click', function () {
@@ -1153,6 +1245,19 @@ function debounce250() {
     r.addEventListener('change', function () {
       setupState.mode = r.value;
       document.getElementById('increment-field-group').hidden = r.value !== 'total_increment';
+      if (!setupState.defaultMsTouched) {
+        setupState.defaultMs = defaultBudgetMsForMode(r.value);
+        setupState.players.forEach(function (p) { p.budgetMs = setupState.defaultMs; });
+        document.getElementById('input-default-min').value = Math.floor(setupState.defaultMs / 60000);
+        document.getElementById('input-default-sec').value = Math.floor((setupState.defaultMs % 60000) / 1000);
+      }
+      if (r.value === 'per_turn') {
+        if (setupState.warningLinked) setupState.warningMs = Engine.defaultWarningMs('per_turn', setupState.defaultMs);
+      } else if (!setupState.warningTouched) {
+        setupState.warningMs = Engine.defaultWarningMs(r.value, setupState.defaultMs);
+      }
+      renderWarningFields();
+      updateDefaultBudgetLabel();
       renderSetupPlayerList();
     });
   });
@@ -1163,6 +1268,7 @@ function debounce250() {
       parseInt(document.getElementById('input-increment-min').value, 10) || 0,
       parseInt(document.getElementById('input-increment-sec').value, 10) || 0
     );
+    setupState.warningMs = (parseInt(document.getElementById('input-warning-sec').value, 10) || 0) * 1000;
     setupState.alertsEnabled = document.getElementById('chk-alerts-enabled').checked;
   }
 
@@ -1184,6 +1290,7 @@ function debounce250() {
       lastPlayedAt: existing ? existing.lastPlayedAt : null,
       mode: setupState.mode,
       incrementMs: setupState.incrementMs,
+      warningMs: Math.max(0, Math.round(Number(setupState.warningMs) || 0)),
       alertsEnabled: setupState.alertsEnabled,
       players: players,
       order: players.map(function (p) { return p.id; })
@@ -1310,18 +1417,46 @@ function debounce250() {
     renderStrip(currentGame);
   }
 
-  function checkAlerts(state) {
+  // The distinct "out of time" cue — fires once per turn, the moment a
+  // player's clock crosses zero. Separate from the repeating low-time
+  // warning below: this one always plays regardless of the warning
+  // threshold, same as the permanent red overdraft screen it accompanies.
+  function checkZeroAlert(state) {
     if (!soundOn || !state.alertsEnabled) return;
     var curId = Engine.currentPlayerId(state);
     var key = state.currentIndex + ':' + state.turnStartedAt;
-    if (alertFired.key !== key) { alertFired.key = key; alertFired.thresholds = {}; }
+    if (zeroFired.key !== key) { zeroFired.key = key; zeroFired.fired = false; }
+    if (zeroFired.fired) return;
+    if (Engine.remainingMs(state, curId) <= 0) {
+      zeroFired.fired = true;
+      AudioFx.playZero();
+    }
+  }
+
+  // Repeating low-time warning: beep + screen pulse, ramping up in
+  // frequency as the current player's turn runs down toward zero. Stops
+  // the instant time goes negative — overdraft's own red screen + buzz
+  // (checkZeroAlert) takes over from there.
+  function checkWarning(state) {
+    var curId = Engine.currentPlayerId(state);
+    var key = state.currentIndex + ':' + state.turnStartedAt;
+    if (warningState.key !== key) { warningState.key = key; warningState.lastFireAt = 0; }
     var rem = Engine.remainingMs(state, curId);
-    [60000, 10000, 0].forEach(function (th) {
-      if (rem <= th && !alertFired.thresholds[th]) {
-        alertFired.thresholds[th] = true;
-        AudioFx.playThreshold(th);
-      }
-    });
+    var warningMs = state.warningMs != null ? state.warningMs : 10000;
+    var cadence = Engine.warningCadenceMs(rem, warningMs);
+    if (cadence == null) return;
+    var now = Date.now();
+    if (now - warningState.lastFireAt < cadence) return;
+    warningState.lastFireAt = now;
+    if (soundOn && state.alertsEnabled) AudioFx.playWarningBeep();
+    flashWarning();
+  }
+
+  function flashWarning() {
+    var panel = document.getElementById('screen-play');
+    panel.classList.remove('warning-flash');
+    void panel.offsetWidth;
+    panel.classList.add('warning-flash');
   }
 
   function playTick() {
@@ -1335,9 +1470,14 @@ function debounce250() {
       document.getElementById('current-remaining').textContent = str;
       prevDisplay.current = str;
     }
-    var nameEl = document.getElementById('current-name');
-    var curName = state.players[curId].name;
-    if (nameEl.textContent !== curName) nameEl.textContent = curName;
+    var curPlayer = state.players[curId];
+    var nameTextEl = document.getElementById('current-name-text');
+    if (nameTextEl.textContent !== curPlayer.name) nameTextEl.textContent = curPlayer.name;
+    var nameDotEl = document.getElementById('current-name-dot');
+    if (nameDotEl.dataset.color !== curPlayer.color) {
+      nameDotEl.style.background = colorVar(curPlayer.color);
+      nameDotEl.dataset.color = curPlayer.color;
+    }
 
     var elapsedStr = 'turn: ' + formatDuration(Engine.turnElapsedMs(state));
     if (elapsedStr !== prevDisplay.elapsed) {
@@ -1348,14 +1488,15 @@ function debounce250() {
     document.getElementById('screen-play').classList.toggle('overdraft', rem < 0);
 
     renderStrip(state);
-    if (!Engine.isPaused(state)) checkAlerts(state);
+    if (!Engine.isPaused(state)) { checkZeroAlert(state); checkWarning(state); }
 
     rafId = requestAnimationFrame(playTick);
   }
 
   function enterPlayScreen() {
     prevDisplay = { current: null, elapsed: null };
-    alertFired = { key: null, thresholds: {} };
+    zeroFired = { key: null, fired: false };
+    warningState = { key: null, lastFireAt: 0 };
     buildStrip(currentGame);
     document.getElementById('chk-sound').checked = soundOn;
     document.getElementById('btn-undo').disabled = !currentGame.undoStack.length;
@@ -1667,8 +1808,27 @@ function debounce250() {
     }
   }
 
+  // A quick-start template for brand new users, so Home isn't empty on
+  // first launch. Runs once ever (tracked separately from the profile list
+  // itself), so deleting it doesn't bring it back on the next reload.
+  function seedDefaultProfileIfNeeded() {
+    if (Storage.hasSeededDefault()) return;
+    Storage.markSeededDefault();
+    if (Object.keys(Storage.loadProfiles()).length > 0) return;
+    var profile = Engine.newProfile();
+    profile.name = 'Quick Chess';
+    profile.mode = 'per_turn';
+    profile.warningMs = 5000;
+    var white = Engine.newProfilePlayer('White', 'white', 10000, 0);
+    var black = Engine.newProfilePlayer('Black', 'black', 10000, 0);
+    profile.players = [white, black];
+    profile.order = [white.id, black.id];
+    Storage.saveProfile(profile);
+  }
+
   function init() {
     registerServiceWorker();
+    seedDefaultProfileIfNeeded();
     renderHome();
   }
 

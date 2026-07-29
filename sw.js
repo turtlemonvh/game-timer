@@ -1,6 +1,6 @@
 // Bump this on every deploy that changes any cached file — the version
 // string is the only thing that makes an update actually replace the cache.
-const CACHE_NAME = 'game-timer-v3';
+const CACHE_NAME = 'game-timer-v4';
 const CACHE_FILES = [
   './',
   './index.html',

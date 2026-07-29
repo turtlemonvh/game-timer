@@ -191,6 +191,68 @@ test('total_increment falls back to the profile default increment for players mi
   assert.equal(state.players.p1.committedRemainingMs, 60000 - 1000 + 7000);
 });
 
+test('defaultWarningMs', async (t) => {
+  const { Engine } = loadEngine();
+
+  await t.test('total and total_increment default to a flat 10s', () => {
+    assert.equal(Engine.defaultWarningMs('total', 600000), 10000);
+    assert.equal(Engine.defaultWarningMs('total_increment', 60000), 10000);
+  });
+
+  await t.test('per_turn defaults to half the turn allowance', () => {
+    assert.equal(Engine.defaultWarningMs('per_turn', 40000), 20000);
+    assert.equal(Engine.defaultWarningMs('per_turn', 15000), 7500);
+  });
+
+  await t.test('per_turn with no budget yet does not go negative', () => {
+    assert.equal(Engine.defaultWarningMs('per_turn', 0), 0);
+    assert.equal(Engine.defaultWarningMs('per_turn', undefined), 0);
+  });
+});
+
+test('warningCadenceMs', async (t) => {
+  const { Engine } = loadEngine();
+
+  await t.test('above the warning threshold: not in the warning zone', () => {
+    assert.equal(Engine.warningCadenceMs(11000, 10000), null);
+  });
+
+  await t.test('negative (overdraft): warning stops, overdraft handles it instead', () => {
+    assert.equal(Engine.warningCadenceMs(-1, 10000), null);
+    assert.equal(Engine.warningCadenceMs(-5000, 60000), null);
+  });
+
+  await t.test('more than 30s left: every 5s', () => {
+    assert.equal(Engine.warningCadenceMs(59000, 60000), 5000);
+    assert.equal(Engine.warningCadenceMs(30001, 60000), 5000);
+  });
+
+  await t.test('10s to 30s left: every 2s', () => {
+    assert.equal(Engine.warningCadenceMs(30000, 60000), 2000);
+    assert.equal(Engine.warningCadenceMs(10001, 60000), 2000);
+  });
+
+  await t.test('10s or less left (including exactly at the threshold): every 1s', () => {
+    assert.equal(Engine.warningCadenceMs(10000, 60000), 1000);
+    assert.equal(Engine.warningCadenceMs(0, 10000), 1000);
+  });
+});
+
+test('createGameState carries the warning threshold from the profile, with a 10s fallback for old data', () => {
+  const { Engine } = loadEngine();
+  const withWarning = Engine.newProfile();
+  withWarning.warningMs = 45000;
+  withWarning.players = [{ id: 'p1', name: 'A', color: 'red', budgetMs: 60000 }];
+  withWarning.order = ['p1'];
+  assert.equal(Engine.createGameState(withWarning).warningMs, 45000);
+
+  const noWarningField = Engine.newProfile();
+  delete noWarningField.warningMs;
+  noWarningField.players = [{ id: 'p1', name: 'A', color: 'red', budgetMs: 60000 }];
+  noWarningField.order = ['p1'];
+  assert.equal(Engine.createGameState(noWarningField).warningMs, 10000);
+});
+
 test('jumpToPlayer', async (t) => {
   const { Engine, advance } = loadEngine();
   const { state, players } = freshGame(Engine, 'total', [

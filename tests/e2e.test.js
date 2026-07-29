@@ -37,7 +37,12 @@ async function newPage() {
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.assertNoErrors = () => assert.deepEqual(errors, [], `unexpected console/page errors: ${JSON.stringify(errors)}`);
   await page.goto(baseUrl + '/index.html');
-  await page.evaluate(() => localStorage.clear());
+  await page.evaluate(() => {
+    localStorage.clear();
+    // Tests want a genuinely blank slate; the first-launch "Quick Chess"
+    // quick-start template has its own dedicated test below.
+    localStorage.setItem('gt:seededDefault', '1');
+  });
   await page.reload();
   return page;
 }
@@ -63,6 +68,20 @@ async function openAdminViaPause(page) {
 
 async function currentName(page) {
   return page.$eval('#current-name', (el) => el.textContent);
+}
+
+// Resolves a --c-<token> palette variable to its computed rgb() string, so
+// tests can assert an element's color against the real palette value rather
+// than a hardcoded hex that would drift if the palette ever changes.
+async function computedColorVarRgb(page, cssProp, token) {
+  return page.evaluate((prop, t) => {
+    const probe = document.createElement('div');
+    probe.style[prop] = `var(--c-${t})`;
+    document.body.appendChild(probe);
+    const rgb = getComputedStyle(probe)[prop];
+    probe.remove();
+    return rgb;
+  }, cssProp, token);
 }
 
 async function adminRowByName(page, name) {
@@ -578,6 +597,244 @@ test('ending a game adds it to game history on the home screen, viewable and per
     await new Promise((r) => setTimeout(r, 200));
     const rows = await page.$$('#profile-list-recent .profile-row');
     assert.equal(rows.length, 1);
+  });
+
+  page.assertNoErrors();
+  await page.close();
+});
+
+test('setup screen: Per turn defaults to a 10s allowance, and the low-time warning stays linked to half of it until unlinked', async (t) => {
+  const page = await newPage();
+  await page.click('#btn-create-first');
+  await page.waitForSelector('#screen-setup:not(.hidden)');
+
+  await t.test('total mode keeps the old 10-minute default', async () => {
+    assert.equal(await page.$eval('#input-default-min', (el) => el.value), '10');
+    assert.equal(await page.$eval('#input-default-sec', (el) => el.value), '0');
+  });
+
+  await t.test('switching to Per turn drops the default to 10s (not 10 minutes), cascaded to every player row', async () => {
+    await page.click('input[name="mode"][value="per_turn"]');
+    assert.equal(await page.$eval('#input-default-min', (el) => el.value), '0');
+    assert.equal(await page.$eval('#input-default-sec', (el) => el.value), '10');
+    // Direct-child combinator: excludes the (hidden) per-player increment
+    // sub-row's own .time-input, which only applies in total_increment mode.
+    const rowSecs = await page.$$eval('#player-setup-list .player-setup-row > .time-input input:nth-of-type(2)',
+      (els) => els.map((el) => el.value));
+    assert.deepEqual(rowSecs, ['10', '10'], 'both player rows should carry the new 10s default');
+  });
+
+  await t.test('the warning field has no minute box, and defaults linked to half the 10s allowance', async () => {
+    assert.equal(await page.$('#input-warning-min'), null, 'the minute input should be gone entirely');
+    assert.equal(await page.$eval('#input-warning-sec', (el) => el.value), '5');
+    assert.equal(await page.$eval('#chk-warning-linked', (el) => el.checked), true);
+    assert.equal(await page.$eval('#input-warning-sec', (el) => el.disabled), true,
+      'the field should be read-only while linked, so it only ever shows the derived value');
+  });
+
+  await t.test('raising the per-turn allowance keeps the linked warning at half, automatically', async () => {
+    await page.$eval('#input-default-min', (el) => { el.value = '0'; });
+    await page.$eval('#input-default-sec', (el) => { el.value = '20'; });
+    await page.click('#btn-apply-default-budget');
+    assert.equal(await page.$eval('#input-warning-sec', (el) => el.value), '10');
+  });
+
+  await t.test('unchecking the link enables manual editing, which then stops following the allowance', async () => {
+    await page.click('#chk-warning-linked');
+    assert.equal(await page.$eval('#input-warning-sec', (el) => el.disabled), false);
+    await page.$eval('#input-warning-sec', (el) => { el.value = '7'; });
+    await page.$eval('#input-warning-sec', (el) => el.dispatchEvent(new Event('change', { bubbles: true })));
+
+    // Changing the allowance again should no longer touch the now-custom warning value.
+    await page.$eval('#input-default-sec', (el) => { el.value = '15'; });
+    await page.click('#btn-apply-default-budget');
+    assert.equal(await page.$eval('#input-warning-sec', (el) => el.value), '7');
+    assert.equal(await page.$eval('#chk-warning-linked', (el) => el.checked), false);
+  });
+
+  await t.test('switching back to Total time restores the flat 10s warning default and hides the link checkbox', async () => {
+    await page.click('input[name="mode"][value="total"]');
+    assert.equal(await page.$eval('#warning-linked-row', (el) => el.hidden), true);
+  });
+
+  page.assertNoErrors();
+  await page.close();
+});
+
+test('play screen: the current player\'s own color shows next to their name, and updates as the turn changes', async (t) => {
+  const page = await newPage();
+  await createProfile(page, { name: 'Color Cue Test', playerNames: ['Reddy', 'Bluey'] });
+  await startFirstProfile(page);
+
+  const expectedRed = await computedColorVarRgb(page, 'backgroundColor', 'red');
+  const expectedBlue = await computedColorVarRgb(page, 'backgroundColor', 'blue');
+
+  await t.test('the first player in rotation shows their own color', async () => {
+    assert.equal(await currentName(page), 'Reddy');
+    const dotColor = await page.$eval('#current-name-dot', (el) => getComputedStyle(el).backgroundColor);
+    assert.equal(dotColor, expectedRed);
+  });
+
+  await t.test('ending the turn updates the color to the next player\'s', async () => {
+    await tapEndTurn(page);
+    assert.equal(await currentName(page), 'Bluey');
+    const dotColor = await page.$eval('#current-name-dot', (el) => getComputedStyle(el).backgroundColor);
+    assert.equal(dotColor, expectedBlue);
+  });
+
+  page.assertNoErrors();
+  await page.close();
+});
+
+test('first launch seeds a "Quick Chess" quick-start template exactly once', async (t) => {
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1024, height: 600 });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.assertNoErrors = () => assert.deepEqual(errors, [], `unexpected console/page errors: ${JSON.stringify(errors)}`);
+  await page.goto(baseUrl + '/index.html');
+  await page.evaluate(() => localStorage.clear()); // a genuinely first-ever launch, no seeded flag set
+  await page.reload();
+  await page.waitForSelector('#screen-home:not(.hidden)');
+
+  await t.test('Quick Chess appears as a ready-to-play template: 2 players, per turn, 10s', async () => {
+    const rowText = await page.$eval('#profile-list-templates .profile-row', (el) => el.textContent);
+    assert.ok(rowText.includes('Quick Chess'), rowText);
+    assert.ok(rowText.includes('2 players'), rowText);
+    assert.ok(rowText.includes('Per turn'), rowText);
+    assert.ok(rowText.includes('0:10'), rowText);
+  });
+
+  await t.test('players are White then Black, in White-first-black-second color and order, with a 5s linked warning', async () => {
+    await page.click('.profile-row-edit');
+    await page.waitForSelector('#screen-setup:not(.hidden)');
+    const names = await page.$$eval('#player-setup-list input[type="text"]', (els) => els.map((el) => el.value));
+    assert.deepEqual(names, ['White', 'Black']);
+
+    const expectedWhite = await computedColorVarRgb(page, 'backgroundColor', 'white');
+    const expectedBlack = await computedColorVarRgb(page, 'backgroundColor', 'black');
+    const swatchColors = await page.$$eval('#player-setup-list .color-swatch-btn',
+      (els) => els.map((el) => getComputedStyle(el).backgroundColor));
+    assert.deepEqual(swatchColors, [expectedWhite, expectedBlack]);
+
+    assert.equal(await page.$eval('input[name="mode"][value="per_turn"]', (el) => el.checked), true);
+    assert.equal(await page.$eval('#input-warning-sec', (el) => el.value), '5');
+    assert.equal(await page.$eval('#chk-warning-linked', (el) => el.checked), true);
+    await page.click('#btn-setup-cancel');
+    await page.waitForSelector('#screen-home:not(.hidden)');
+  });
+
+  await t.test('deleting it does not bring it back on the next reload', async () => {
+    page.once('dialog', (d) => d.accept());
+    await page.click('#profile-list-templates .profile-row-delete');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(await page.$('#profile-list-templates .profile-row'), null);
+
+    await page.reload();
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(await page.$('.profile-row'), null, 'Quick Chess must not be reseeded once it has been deleted');
+  });
+
+  page.assertNoErrors();
+  await page.close();
+});
+
+test('setup screen: per_turn mode uses increment-flavored wording, and a player\'s chosen color surrounds their name', async (t) => {
+  const page = await newPage();
+  await page.click('#btn-create-first');
+  await page.waitForSelector('#screen-setup:not(.hidden)');
+
+  await t.test('default budget label reads plainly for total/total_increment modes', async () => {
+    const label = await page.$eval('#label-default-budget', (el) => el.textContent);
+    assert.equal(label, 'Default budget per player');
+  });
+
+  await t.test('switching to Per turn relabels the field and tags each player row "+per turn"', async () => {
+    await page.click('input[name="mode"][value="per_turn"]');
+    const label = await page.$eval('#label-default-budget', (el) => el.textContent);
+    assert.equal(label, 'Default increment per player');
+    const rowText = await page.$eval('#player-setup-list .player-setup-row', (el) => el.textContent);
+    assert.ok(rowText.includes('+per turn'), `expected the per-turn suffix in the player row, got "${rowText}"`);
+  });
+
+  await t.test('switching back to Total time restores the plain label', async () => {
+    await page.click('input[name="mode"][value="total"]');
+    const label = await page.$eval('#label-default-budget', (el) => el.textContent);
+    assert.equal(label, 'Default budget per player');
+  });
+
+  await t.test('picking a color surrounds the player\'s name with a matching border, not just a small swatch', async () => {
+    await page.click('#player-setup-list .player-setup-row .color-swatch-btn');
+    await page.waitForSelector('#popover-color:not(.hidden)');
+    const swatches = await page.$$('#color-swatch-list .color-swatch-btn');
+    await swatches[2].click(); // PALETTE order: red, blue, amber, ...
+    await page.waitForSelector('#popover-color.hidden');
+
+    const chipBorder = await page.$eval('.player-setup-name-chip', (el) => getComputedStyle(el).borderColor);
+    const expectedAmber = await page.evaluate(() => {
+      const probe = document.createElement('div');
+      probe.style.borderColor = 'var(--c-amber)';
+      document.body.appendChild(probe);
+      const rgb = getComputedStyle(probe).borderColor;
+      probe.remove();
+      return rgb;
+    });
+    assert.equal(chipBorder, expectedAmber);
+  });
+
+  page.assertNoErrors();
+  await page.close();
+});
+
+test('low-time warning: silent above the threshold, beeps + pulses amber on entry, and stops once overdraft begins', async (t) => {
+  const page = await newPage();
+  await createProfile(page, { name: 'Warning Test', playerNames: ['A', 'B'] });
+  await startFirstProfile(page);
+  await page.evaluate(() => {
+    window.__beepCount = 0;
+    window.AudioFx.playWarningBeep = () => { window.__beepCount++; };
+  });
+
+  async function setCurrentPlayerRemaining(clockStr) {
+    await openAdminViaPause(page);
+    const row = await page.$('.admin-player-row');
+    const [, timeField] = await row.$$('input[type="text"]');
+    await timeField.click({ clickCount: 3 });
+    await timeField.type(clockStr);
+    await timeField.evaluate((el) => el.dispatchEvent(new Event('change', { bubbles: true })));
+    await new Promise((r) => setTimeout(r, 100));
+    await page.click('#btn-admin-close');
+    await page.waitForSelector('#overlay-admin.hidden');
+    await page.click('#btn-resume-game');
+    await page.waitForSelector('#overlay-pause.hidden');
+  }
+
+  await t.test('no warning while comfortably above the 10s default threshold', async () => {
+    await new Promise((r) => setTimeout(r, 300));
+    const hasFlash = await page.$eval('#screen-play', (el) => el.classList.contains('warning-flash'));
+    const beeps = await page.evaluate(() => window.__beepCount);
+    assert.equal(hasFlash, false);
+    assert.equal(beeps, 0);
+  });
+
+  await t.test('entering the warning zone fires an immediate beep and screen pulse', async () => {
+    await setCurrentPlayerRemaining('0:05'); // 5s left, inside the default 10s warning window
+    await new Promise((r) => setTimeout(r, 200));
+    const hasFlash = await page.$eval('#screen-play', (el) => el.classList.contains('warning-flash'));
+    const beeps = await page.evaluate(() => window.__beepCount);
+    assert.equal(hasFlash, true);
+    assert.ok(beeps >= 1, `expected at least one warning beep, got ${beeps}`);
+  });
+
+  await t.test('crossing into overdraft stops the warning (no further beeps once time is negative)', async () => {
+    const beepsBeforeOverdraft = await page.evaluate(() => window.__beepCount);
+    await setCurrentPlayerRemaining('-0:02'); // already in overdraft
+    await new Promise((r) => setTimeout(r, 300));
+    const isOverdraft = await page.$eval('#screen-play', (el) => el.classList.contains('overdraft'));
+    const beeps = await page.evaluate(() => window.__beepCount);
+    assert.equal(isOverdraft, true);
+    assert.equal(beeps, beepsBeforeOverdraft, 'no new warning beeps should fire once the player is in overdraft');
   });
 
   page.assertNoErrors();
